@@ -1,0 +1,16 @@
+services:
+  apacheds:
+    image: itzg/apacheds:latest
+    container_name: apacheds
+    environment:
+      # Name of the instance directory. "default" is typical
+      APACHEDS_INSTANCE: default
+      # Enable SSL (LDAPS)
+      APACHEDS_ENABLE_SSL: "true"
+      # Enable StartTLS on the unencrypted port
+      APACHEDS_ENABLE_STARTTLS: "true"
+    #volumes:
+    # - "./config-apache.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/config-ldap.ldif"
+    ports:
+      - "389:10389"   # LDAP
+      - "636:10636"   # LDAPS

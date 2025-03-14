@@ -1,0 +1,61 @@
+issuer: http://127.0.0.1:5556/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: examples/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+connectors:
+- type: ldap
+  # Display name shown to users logging in
+  name: ApacheDS
+  # Internal ID that must be unique among connectors
+  id: ldap
+  config:
+    # Host and port for ApacheDS. Adjust if not on localhost.
+    host: "localhost:389"
+    # For plain LDAP (no TLS):
+    insecureNoSSL: true
+
+    # Credentials for binding (read-only admin or similar)
+    bindDN: uid=admin,ou=system
+    bindPW: secret
+
+    # Prompt shown to the user on the login screen
+    usernamePrompt: Email Address
+
+    userSearch:
+      # Where Dex looks for users
+      baseDN: ou=People,dc=example,dc=com
+      filter: "(objectClass=person)"
+      # Dex will ask the user for the "Email Address" and match it to this LDAP attribute
+      username: mail
+      # Use the full DN as a user’s unique ID
+      idAttr: DN
+      # The email attribute in LDAP
+      emailAttr: mail
+      # The human-readable name attribute
+      nameAttr: cn
+
+    groupSearch:
+      # Where Dex looks for groups
+      baseDN: ou=Groups,dc=example,dc=com
+      filter: "(objectClass=groupOfNames)"
+
+      # A user is a member of a group if their DN appears on the group's `member` attribute
+      userMatchers:
+      - userAttr: DN
+        groupAttr: member
+
+      # Use the "cn" attribute to name the group
+      nameAttr: cn
+
+staticClients:
+- id: example-app
+  redirectURIs:
+  - "http://127.0.0.1:5555/callback"
+  name: "Example App"
+  secret: ZXhhbXBsZS1hcHAtc2VjcmV0
