@@ -545,7 +545,7 @@ func TestNestedGroups(t *testing.T) {
 	}
 	c.GroupSearch.NameAttr = "cn"
 
-	//Enable Nested Group Lookup
+	// Enable Nested Group Lookup
 	c.GroupSearch.Inheritance = true
 
 	tests := []subtest{
@@ -663,7 +663,7 @@ func runTests(t *testing.T, connMethod connectionMethod, config *Config, tests [
 			got := ident
 			got.ConnectorData = nil
 
-			//Sort groups so out of order groups do not cause erros
+			// Sort groups so out of order groups do not cause erros
 			if test.groups {
 				if got.Groups != nil {
 					sort.Strings(got.Groups)
@@ -687,7 +687,7 @@ func runTests(t *testing.T, connMethod connectionMethod, config *Config, tests [
 			got = ident
 			got.ConnectorData = nil
 
-			//sort groups after refresh
+			// Sort groups after refresh
 			if test.groups {
 				if got.Groups != nil {
 					sort.Strings(got.Groups)

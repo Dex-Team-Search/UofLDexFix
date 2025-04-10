@@ -158,7 +158,7 @@ type Config struct {
 
 		// The attribute of the group that represents its name.
 		NameAttr string `json:"nameAttr"`
-		//Look for parent groups
+		// Look for parent groups
 		Inheritance bool `json:"inheritance"`
 	} `json:"groupSearch"`
 }
