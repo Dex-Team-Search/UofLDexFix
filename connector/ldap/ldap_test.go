@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/kylelemons/godebug/pretty"
@@ -525,6 +526,63 @@ func TestUsernamePrompt(t *testing.T) {
 	}
 }
 
+func TestNestedGroups(t *testing.T) {
+	c := &Config{}
+	// Users are looked up under the TestQuery branch.
+	c.UserSearch.BaseDN = "ou=People,ou=TestQuery,dc=example,dc=org"
+	c.UserSearch.NameAttr = "cn"
+	c.UserSearch.EmailAttr = "mail"
+	c.UserSearch.IDAttr = "DN"
+	c.UserSearch.Username = "cn"
+
+	// Group search is performed under the NestedGroups branch.
+	c.GroupSearch.BaseDN = "ou=TestNestedGroups,dc=example,dc=org"
+	c.GroupSearch.UserMatchers = []UserMatcher{
+		{
+			UserAttr:  "DN",
+			GroupAttr: "member",
+		},
+	}
+	c.GroupSearch.NameAttr = "cn"
+
+	//Enable Nested Group Lookup
+	c.GroupSearch.Inheritance = true
+
+	tests := []subtest{
+		{
+			name:     "nestedgroups_jane",
+			username: "jane",
+			password: "foo",
+			groups:   true,
+			want: connector.Identity{
+				UserID:        "cn=jane,ou=People,ou=TestQuery,dc=example,dc=org",
+				Username:      "jane",
+				Email:         "janedoe@example.com",
+				EmailVerified: true,
+				// Expecting that nested group resolution finds that jane is a member of both
+				// childGroup (direct membership) and parentGroup (indirect via childGroup).
+				Groups: []string{"childGroup", "parentGroup"},
+			},
+		},
+		{
+			name:     "nestedgroups_john",
+			username: "john",
+			password: "bar",
+			groups:   true,
+			want: connector.Identity{
+				UserID:        "cn=john,ou=People,ou=TestQuery,dc=example,dc=org",
+				Username:      "john",
+				Email:         "johndoe@example.com",
+				EmailVerified: true,
+				// John is directly a member of parentGroup.
+				Groups: []string{"parentGroup"},
+			},
+		},
+	}
+
+	runTests(t, connectLDAP, c, tests)
+}
+
 func getenv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -605,6 +663,16 @@ func runTests(t *testing.T, connMethod connectionMethod, config *Config, tests [
 			got := ident
 			got.ConnectorData = nil
 
+			//Sort groups so out of order groups do not cause erros
+			if test.groups {
+				if got.Groups != nil {
+					sort.Strings(got.Groups)
+				}
+				if test.want.Groups != nil {
+					sort.Strings(test.want.Groups)
+				}
+			}
+
 			if diff := pretty.Compare(test.want, got); diff != "" {
 				t.Error(diff)
 				return
@@ -618,6 +686,16 @@ func runTests(t *testing.T, connMethod connectionMethod, config *Config, tests [
 
 			got = ident
 			got.ConnectorData = nil
+
+			//sort groups after refresh
+			if test.groups {
+				if got.Groups != nil {
+					sort.Strings(got.Groups)
+				}
+				if test.want.Groups != nil {
+					sort.Strings(test.want.Groups)
+				}
+			}
 
 			if diff := pretty.Compare(test.want, got); diff != "" {
 				t.Errorf("after refresh: %s", diff)

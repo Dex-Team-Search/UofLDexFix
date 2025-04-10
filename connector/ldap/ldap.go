@@ -595,100 +595,113 @@ func (c *ldapConnector) groups(ctx context.Context, user ldap.Entry) ([]string, 
 		return nil, nil
 	}
 
+	// We'll use this map to deduplicate group names.
+	groupSet := make(map[string]struct{})
 	var groups []*ldap.Entry
-	var groupNames []string
 
-	// Initial search: For each attribute from the user entry used for group lookup,
-	// use c.queryGroups to perform the search.
-	for _, attr := range c.getAttrs(user, c.GroupSearch.UserAttr) {
-		obtainedGroups, filter, err := c.queryGroups(ctx, attr)
-		if err != nil {
-			return nil, err
-		}
-		groups = append(groups, obtainedGroups...)
-		if len(obtainedGroups) == 0 {
-			// Log if no groups were found for this attribute.
-			c.logger.Error("ldap: groups search returned no groups", "filter", filter)
+	// Initial search: For each configured matcher, use each attribute value from the user entry.
+	for _, matcher := range c.GroupSearch.UserMatchers {
+		for _, attr := range c.getAttrs(user, matcher.UserAttr) {
+			filter := fmt.Sprintf("(%s=%s)", matcher.GroupAttr, ldap.EscapeFilter(attr))
+			if c.GroupSearch.Filter != "" {
+				filter = fmt.Sprintf("(&%s%s)", c.GroupSearch.Filter, filter)
+			}
+			req := &ldap.SearchRequest{
+				BaseDN:     c.GroupSearch.BaseDN,
+				Filter:     filter,
+				Scope:      c.groupSearchScope,
+				Attributes: []string{c.GroupSearch.NameAttr},
+			}
+			var obtained []*ldap.Entry
+			if err := c.do(ctx, func(conn *ldap.Conn) error {
+				c.logger.Info("performing ldap search",
+					"base_dn", req.BaseDN, "scope", scopeString(req.Scope), "filter", req.Filter)
+				resp, err := conn.Search(req)
+				if err != nil {
+					return fmt.Errorf("ldap: search failed: %v", err)
+				}
+				obtained = resp.Entries
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+			if len(obtained) == 0 {
+				c.logger.Error("ldap: groups search returned no groups", "filter", filter)
+			}
+			groups = append(groups, obtained...)
 		}
 	}
 
-	// Log if inheritance (nested group search) is enabled.
+	// Add names from initial groups to our set.
+	for _, group := range groups {
+		name := c.getAttr(*group, c.GroupSearch.NameAttr)
+		if name == "" {
+			return nil, fmt.Errorf("ldap: group entity %q missing required attribute %q", group.DN, c.GroupSearch.NameAttr)
+		}
+		groupSet[name] = struct{}{}
+	}
+
+	// If nested group search (inheritance) is enabled, iteratively search for parent groups.
 	if c.GroupSearch.Inheritance {
 		c.logger.Info("Inheritance enabled for groups search")
+		for {
+			var nextLevelGroups []*ldap.Entry
+			// For each group already found
+			for _, group := range groups {
+				// For each matcher, query by using the group's DN.
+				for _, matcher := range c.GroupSearch.UserMatchers {
+					filter := fmt.Sprintf("(%s=%s)", matcher.GroupAttr, ldap.EscapeFilter(group.DN))
+					if c.GroupSearch.Filter != "" {
+						filter = fmt.Sprintf("(&%s%s)", c.GroupSearch.Filter, filter)
+					}
+					req := &ldap.SearchRequest{
+						BaseDN:     c.GroupSearch.BaseDN,
+						Filter:     filter,
+						Scope:      c.groupSearchScope,
+						Attributes: []string{c.GroupSearch.NameAttr},
+					}
+					var obtained []*ldap.Entry
+					if err := c.do(ctx, func(conn *ldap.Conn) error {
+						c.logger.Info("performing ldap search", "base_dn", req.BaseDN, "scope", scopeString(req.Scope), "filter", req.Filter)
+						resp, err := conn.Search(req)
+						if err != nil {
+							return fmt.Errorf("ldap: search failed: %v", err)
+						}
+						obtained = resp.Entries
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+					// For each parent group obtained, add it if it’s new.
+					for _, parentGroup := range obtained {
+						name := c.getAttr(*parentGroup, c.GroupSearch.NameAttr)
+						if name == "" {
+							return nil, fmt.Errorf("ldap: group entity %q missing required attribute %q", parentGroup.DN, c.GroupSearch.NameAttr)
+						}
+						if _, exists := groupSet[name]; !exists {
+							groupSet[name] = struct{}{}
+							nextLevelGroups = append(nextLevelGroups, parentGroup)
+						}
+					}
+					if len(obtained) == 0 {
+						c.logger.Info("Didn't find parents for group", "group_dn", group.DN)
+					}
+				}
+			}
+			if len(nextLevelGroups) == 0 {
+				break
+			}
+			groups = nextLevelGroups
+		}
 	}
 
-	// Iteratively search parent groups to support nested group (inheritance) functionality.
-	for {
-		var nextLevelGroups []*ldap.Entry
-		for _, group := range groups {
-			name := c.getAttr(*group, c.GroupSearch.NameAttr)
-			if name == "" {
-				return nil, fmt.Errorf("ldap: group entity %q missing required attribute %q", group.DN, c.GroupSearch.NameAttr)
-			}
-
-			// Prevent duplicates and circular references.
-			duplicate := false
-			for _, existingName := range groupNames {
-				if name == existingName {
-					c.logger.Info("Found duplicate group", "name", name)
-					duplicate = true
-					break
-				}
-				c.logger.Info("Comparing groups", "first", name, "second", existingName)
-			}
-			if !duplicate {
-				groupNames = append(groupNames, name)
-			}
-
-			// If inheritance is enabled, search for parent groups using the group's DN.
-			if c.GroupSearch.Inheritance {
-				obtainedGroups, _, err := c.queryGroups(ctx, group.DN)
-				if err != nil {
-					return nil, err
-				}
-				if len(obtainedGroups) != 0 {
-					nextLevelGroups = append(nextLevelGroups, obtainedGroups...)
-				} else {
-					c.logger.Info("Didn't find parents for group", "name", name)
-				}
-			}
-		}
-		// Exit the loop when no more parent groups are found.
-		if len(nextLevelGroups) == 0 {
-			break
-		}
-		groups = nextLevelGroups
+	// Convert the set of group names to a slice.
+	groupNames := make([]string, 0, len(groupSet))
+	for name := range groupSet {
+		groupNames = append(groupNames, name)
 	}
 
 	return groupNames, nil
-}
-
-// Abrstraction query of Groups and reuse code
-func (c *ldapConnector) queryGroups(ctx context.Context, dn string) ([]*ldap.Entry, string, error) {
-	var groups []*ldap.Entry
-	filter := fmt.Sprintf("(%s=%s)", c.GroupSearch.GroupAttr, ldap.EscapeFilter(dn))
-	if c.GroupSearch.Filter != "" {
-		filter = fmt.Sprintf("(&%s%s)", c.GroupSearch.Filter, filter)
-	}
-	req := &ldap.SearchRequest{
-		BaseDN:     c.GroupSearch.BaseDN,
-		Filter:     filter,
-		Scope:      c.groupSearchScope,
-		Attributes: []string{c.GroupSearch.NameAttr},
-	}
-
-	if err := c.do(ctx, func(conn *ldap.Conn) error {
-		c.logger.Info("performing ldap search", "base_dn", req.BaseDN, "scope", scopeString(req.Scope), "filter", req.Filter)
-		resp, err := conn.Search(req)
-		if err != nil {
-			return fmt.Errorf("ldap: search failed: %v", err)
-		}
-		groups = append(groups, resp.Entries...)
-		return nil
-	}); err != nil {
-		return nil, filter, err
-	}
-	return groups, filter, nil
 }
 
 func (c *ldapConnector) Prompt() string {
