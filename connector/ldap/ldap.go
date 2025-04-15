@@ -678,7 +678,10 @@ func (c *ldapConnector) groups(ctx context.Context, user ldap.Entry) ([]string, 
 						if name == "" {
 							return nil, fmt.Errorf("ldap: group entity %q missing required attribute %q", parentGroup.DN, c.GroupSearch.NameAttr)
 						}
-						if _, exists := groupSet[name]; !exists {
+						if _, exists := groupSet[name]; exists {
+							// Log encountered duplicate name.
+							c.logger.Warn("duplicate group name encountered", "group", name)
+						} else {
 							groupSet[name] = struct{}{}
 							nextLevelGroups = append(nextLevelGroups, parentGroup)
 						}
