@@ -159,7 +159,7 @@ type Config struct {
 		// The attribute of the group that represents its name.
 		NameAttr string `json:"nameAttr"`
 		// Look for parent groups
-		Inheritance bool `json:"inheritance"`
+		Recursive bool `json:"recursive"`
 	} `json:"groupSearch"`
 }
 
@@ -641,9 +641,9 @@ func (c *ldapConnector) groups(ctx context.Context, user ldap.Entry) ([]string, 
 		groupSet[name] = struct{}{}
 	}
 
-	// If nested group search (inheritance) is enabled, iteratively search for parent groups.
-	if c.GroupSearch.Inheritance {
-		c.logger.Info("Inheritance enabled for groups search")
+	// If nested group search (recursive) is enabled, iteratively search for parent groups.
+	if c.GroupSearch.Recursive {
+		c.logger.Info("Recursive enabled for groups search")
 		for {
 			var nextLevelGroups []*ldap.Entry
 			// For each group already found

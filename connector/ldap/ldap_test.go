@@ -546,7 +546,7 @@ func TestNestedGroups(t *testing.T) {
 	c.GroupSearch.NameAttr = "cn"
 
 	// Enable Nested Group Lookup
-	c.GroupSearch.Inheritance = true
+	c.GroupSearch.Recursive = true
 
 	tests := []subtest{
 		{
