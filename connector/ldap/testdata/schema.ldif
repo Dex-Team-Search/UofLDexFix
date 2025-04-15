@@ -445,3 +445,20 @@ sn: doe
 cn: jane
 mail: janedoe@example.com
 userpassword: foo
+
+########################################################################
+
+dn: ou=TestNestedGroups,dc=example,dc=org
+objectClass: organizationalUnit
+ou: TestNestedGroups
+
+dn: cn=childGroup,ou=TestNestedGroups,dc=example,dc=org
+objectClass: groupOfNames
+cn: childGroup
+member: cn=jane,ou=People,ou=TestQuery,dc=example,dc=org
+
+dn: cn=parentGroup,ou=TestNestedGroups,dc=example,dc=org
+objectClass: groupOfNames
+cn: parentGroup
+member: cn=childGroup,ou=TestNestedGroups,dc=example,dc=org
+member: cn=john,ou=People,ou=TestQuery,dc=example,dc=org
